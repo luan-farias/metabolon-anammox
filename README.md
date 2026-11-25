@@ -7,3 +7,8 @@ The microbial community of these two treatment approaches is compared based on 1
 
 The experiments were conducted in the pilot plant installed in the :metabolon institute (TH Köln), located in the surroundings of the Leppe landfill, between March 2021 and August 2022.
 The metagenomics analysis were conducted at the Aquatic Microbiology group at the University of Duisburg-Essen, between June 2022 and October 2023.
+
+This repository contains:
+1) the R script for the DADA2 pipeline
+2) the R script for plot generation
+3) folder with sample plots
