@@ -1,0 +1,1125 @@
+---
+title: "Research Practical"
+author: "Luan Farias"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning = FALSE}
+library("pacman")
+pacman::p_load(dada2, phyloseq, Biostrings, ggplot2, stringr, patchwork)
+```
+
+DADA2 pipeline.
+
+The following steps must be followed for each of the sequencing runs necessary to create our data. S5005 S6464 S6465 S8275
+
+This script was processes in a Linux server.
+
+### S5005
+
+```{r}
+path1 <- "/mnt/xio/lf/metabolon/data/S5005"
+lf1<-list.files(path1)
+lf1
+```
+
+Primer_forward (S-D-Arch-0519-a-S-15; Klindworth et al. 2012): "TCGTCGGCAGCGTCAGATGTGTATAAGAGACAGCAGCMGCCGCGGTAA" "CAGCMGCCGCGGTAA" 15 bases
+
+Primer_reverse (S-D-Bact-0785-a-A-21; Klindworth et al. 2012): "GTCTCGTGGGCTCGGAGATGTGTATAAGAGACAGGACTACHVGGGTATCTAATCC" "GACTACHVGGGTATCTAATCC" 21 bases
+
+```{r}
+fq <- scan(file=paste0(path1,"/",lf1[2]),what=character())
+length(fq)/5
+
+primer1 <- which(str_count(fq,"CAGC[:alpha:]GCCGCGGTAA")>0)
+length(primer1)/(length(fq)/5)
+
+primer2 <- which(str_count(fq,"GACTAC[:alpha:][:alpha:]GGGTATCTAATCC")>0)
+length(primer2)/(length(fq)/5)
+```
+
+Forward and reverse fastq filenames have format: SAMPLENAME_R1_001.fastq and SAMPLENAME_R2_001.fastq
+
+```{r}
+fnFs_5005 <- sort(list.files(path1, pattern=".1.fastq", full.names = TRUE))
+fnRs_5005 <- sort(list.files(path1, pattern=".2.fastq", full.names = TRUE))
+```
+
+```{r}
+plotQualityProfile(fnFs_5005[1:4])
+```
+
+```{r}
+plotQualityProfile(fnRs_5005[1:4])
+```
+
+Extract sample names, assuming file names have format: SAMPLENAME_XXX.fastq
+
+```{r}
+sample.names_5005 <- sapply(strsplit(basename(fnFs_5005), "\\."), "[",1)
+```
+
+Place filtered files in filtered/ subdirectory
+
+```{r}
+filtFs_5005 <- file.path(path1, "filtered", paste0(sample.names_5005, "_F_filt.fastq.gz"))
+filtRs_5005 <- file.path(path1, "filtered", paste0(sample.names_5005, "_R_filt.fastq.gz"))
+names(filtFs_5005) <- sample.names_5005
+names(filtRs_5005) <- sample.names_5005
+```
+
+```{r}
+out_5005 <- filterAndTrim(fnFs_5005, filtFs_5005, fnRs_5005, filtRs_5005, 
+                          truncLen=c(240,200), trimLeft=c(15,21),
+                          maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+                          compress=TRUE, multithread=TRUE)
+
+out_5005
+
+saveRDS(out_5005,"S5005_out.rds")
+```
+
+```{r}
+errF_5005 <- learnErrors(filtFs_5005, multithread=TRUE)
+plotErrors(errF_5005, nominalQ=TRUE)
+saveRDS(errF_5005,"S5005_errF.rds")
+
+errR_5005 <- learnErrors(filtRs_5005, multithread=TRUE)
+plotErrors(errR_5005, nominalQ=TRUE)
+saveRDS(errR_5005,"S5005_errR.rds")
+```
+
+```{r}
+dadaFs_5005 <- dada(filtFs_5005, err=errF_5005, multithread=TRUE)
+dadaRs_5005 <- dada(filtRs_5005, err=errR_5005, multithread=TRUE)
+
+saveRDS(dadaFs_5005, "S5005_dadaFs.rds")
+saveRDS(dadaRs_5005, "S5005_dadaRs.rds")
+```
+
+Merge paired reads
+
+```{r}
+mergers_5005 <- mergePairs(dadaFs_5005, filtFs_5005, dadaRs_5005, filtRs_5005, verbose=TRUE)
+saveRDS(mergers_5005, "S5005_mergers.rds")
+```
+
+Construct sequence table
+
+```{r}
+seqtab_5005 <- makeSequenceTable(mergers_5005)
+dim(seqtab_5005)
+saveRDS(seqtab_5005, "S5005_seqtab.rds")
+```
+
+Remove chimeras
+
+```{r}
+seqtab_5005_nochim <- removeBimeraDenovo(seqtab_5005, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab_5005_nochim)
+saveRDS(seqtab_5005_nochim, "seqtab_5005_nochim.rds")
+
+sum(seqtab_5005_nochim)/sum(seqtab_5005)
+```
+
+Track reads through the pipeline
+
+```{r}
+getN_5005 <- function(x) sum(getUniques(x))
+track_5005 <- cbind(out_5005, sapply(dadaFs_5005, getN_5005), sapply(dadaRs_5005, getN_5005), sapply(mergers_5005, getN_5005), rowSums(seqtab_5005_nochim))
+
+colnames(track_5005) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track_5005) <- sample.names_5005
+head(track_5005)
+```
+
+### S6464
+
+```{r}
+path2 <- "/mnt/xio/lf/metabolon/data/S6464"
+lf2<-list.files(path2)
+lf2
+```
+
+Primer check
+
+```{r}
+fq <- scan(file=paste0(path2,"/",lf2[2]),what=character())
+length(fq)/5
+
+primer1 <- which(str_count(fq,"CAGC[:alpha:]GCCGCGGTAA")>0)
+length(primer1)/(length(fq)/5)
+
+primer2 <- which(str_count(fq,"GACTAC[:alpha:][:alpha:]GGGTATCTAATCC")>0)
+length(primer2)/(length(fq)/5)
+```
+
+Forward and reverse fastq filenames have format: SAMPLENAME_R1_001.fastq and SAMPLENAME_R2_001.fastq
+
+```{r}
+fnFs_6464 <- sort(list.files(path2, pattern=".1.fastq", full.names = TRUE))
+fnRs_6464 <- sort(list.files(path2, pattern=".2.fastq", full.names = TRUE))
+```
+
+```{r}
+plotQualityProfile(fnFs_6464[1:4])
+```
+
+```{r}
+plotQualityProfile(fnRs_6464[1:4])
+```
+
+Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+
+```{r}
+sample.names_6464 <- sapply(strsplit(basename(fnFs_6464), "\\."), "[",1)
+```
+
+Place filtered files in filtered/ subdirectory
+
+```{r}
+filtFs_6464 <- file.path(path2, "filtered", paste0(sample.names_6464, "_F_filt.fastq.gz"))
+filtRs_6464 <- file.path(path2, "filtered", paste0(sample.names_6464, "_R_filt.fastq.gz"))
+names(filtFs_6464) <- sample.names_6464
+names(filtRs_6464) <- sample.names_6464
+```
+
+```{r}
+out_6464 <- filterAndTrim(fnFs_6464, filtFs_6464, fnRs_6464, filtRs_6464, truncLen=c(240,200), trimLeft=c(15,21),
+                     maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+                     compress=TRUE, multithread=TRUE)
+
+out_6464
+
+saveRDS(out_6464,"S6464_out.rds")
+```
+
+```{r}
+errF_6464 <- learnErrors(filtFs_6464, multithread=TRUE)
+saveRDS(errF_6464,"S6464_errF.rds")
+
+plotErrors(errF_6464, nominalQ=TRUE)
+
+errR_6464 <- learnErrors(filtRs_6464, multithread=TRUE)
+saveRDS(errR_6464,"S6464_errR.rds")
+
+plotErrors(errR_6464, nominalQ=TRUE)
+```
+
+```{r}
+dadaFs_6464 <- dada(filtFs_6464, err=errF_6464, multithread=TRUE)
+dadaRs_6464 <- dada(filtRs_6464, err=errR_6464, multithread=TRUE)
+
+saveRDS(dadaFs_6464, "S6464_dadaFs.rds")
+saveRDS(dadaRs_6464, "S6464_dadaRs.rds")
+```
+
+Merge paired reads
+
+```{r}
+mergers_6464 <- mergePairs(dadaFs_6464, filtFs_6464, dadaRs_6464, filtRs_6464, verbose=TRUE)
+saveRDS(mergers_6464, "S6464_mergers.rds")
+```
+
+Construct sequence table
+
+```{r}
+seqtab_6464 <- makeSequenceTable(mergers_6464)
+dim(seqtab_6464)
+saveRDS(seqtab_6464, "S6464_seqtab.rds")
+```
+
+Remove chimeras
+
+```{r}
+seqtab_6464_nochim <- removeBimeraDenovo(seqtab_6464, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab_6464_nochim)
+saveRDS(seqtab_6464_nochim, "seqtab_6464_nochim.rds")
+
+sum(seqtab_6464_nochim)/sum(seqtab_6464)
+```
+
+Track reads through the pipeline
+
+```{r}
+getN_6464 <- function(x) sum(getUniques(x))
+track_6464 <- cbind(out_6464, sapply(dadaFs_6464, getN_6464), sapply(dadaRs_6464, getN_6464), sapply(mergers_6464, getN_6464), rowSums(seqtab_6464_nochim))
+
+colnames(track_6464) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track_6464) <- sample.names_6464
+head(track_6464)
+```
+
+### S6465
+
+```{r}
+path3 <- "/mnt/xio/lf/metabolon/data/S6465"
+lf3<-list.files(path3)
+lf3
+```
+
+Primer check
+
+```{r}
+fq <- scan(file=paste0(path3,"/",lf3[2]),what=character())
+length(fq)/5
+
+primer1 <- which(str_count(fq,"CAGC[:alpha:]GCCGCGGTAA")>0)
+length(primer1)/(length(fq)/5)
+
+primer2 <- which(str_count(fq,"GACTAC[:alpha:][:alpha:]GGGTATCTAATCC")>0)
+length(primer2)/(length(fq)/5)
+```
+
+Forward and reverse fastq filenames have format: SAMPLENAME_R1_001.fastq and SAMPLENAME_R2_001.fastq
+
+```{r}
+fnFs_6465 <- sort(list.files(path3, pattern=".1.fastq", full.names = TRUE))
+fnRs_6465 <- sort(list.files(path3, pattern=".2.fastq", full.names = TRUE))
+```
+
+```{r}
+plotQualityProfile(fnFs_6465[1:4])
+```
+
+```{r}
+plotQualityProfile(fnRs_6465[1:4])
+```
+
+Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+
+```{r}
+sample.names_6465 <- sapply(strsplit(basename(fnFs_6465), "\\."), "[",1)
+```
+
+Place filtered files in filtered/ subdirectory
+
+```{r}
+filtFs_6465 <- file.path(path3, "filtered", paste0(sample.names_6465, "_F_filt.fastq.gz"))
+filtRs_6465 <- file.path(path3, "filtered", paste0(sample.names_6465, "_R_filt.fastq.gz"))
+names(filtFs_6465) <- sample.names_6465
+names(filtRs_6465) <- sample.names_6465
+```
+
+```{r}
+out_6465 <- filterAndTrim(fnFs_6465, filtFs_6465, fnRs_6465, filtRs_6465, truncLen=c(240,200), trimLeft=c(15,21),
+                     maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+                     compress=TRUE, multithread=TRUE)
+
+out_6465
+
+saveRDS(out_6465,"S6465_out.rds")
+```
+
+```{r}
+errF_6465 <- learnErrors(filtFs_6465, multithread=TRUE)
+saveRDS(errF_6465,"S6465_errF.rds")
+
+plotErrors(errF_6465, nominalQ=TRUE)
+
+errR_6465 <- learnErrors(filtRs_6465, multithread=TRUE)
+saveRDS(errR_6465,"S6465_errR.rds")
+
+plotErrors(errR_6465, nominalQ=TRUE)
+```
+
+```{r}
+dadaFs_6465 <- dada(filtFs_6465, err=errF_6465, multithread=TRUE)
+dadaRs_6465 <- dada(filtRs_6465, err=errR_6465, multithread=TRUE)
+
+saveRDS(dadaFs_6465, "S6465_dadaFs.rds")
+saveRDS(dadaRs_6465, "S6465_dadaRs.rds")
+```
+
+Merge paired reads
+
+```{r}
+mergers_6465 <- mergePairs(dadaFs_6465, filtFs_6465, dadaRs_6465, filtRs_6465, verbose=TRUE)
+saveRDS(mergers_6465, "S6465_mergers.rds")
+```
+
+Construct sequence table
+
+```{r}
+seqtab_6465 <- makeSequenceTable(mergers_6465)
+dim(seqtab_6465)
+saveRDS(seqtab_6465, "S6465_seqtab.rds")
+
+```
+
+Remove chimeras
+
+```{r}
+seqtab_6465_nochim <- removeBimeraDenovo(seqtab_6465, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab_6465_nochim)
+saveRDS(seqtab_6465_nochim, "seqtab_6465_nochim.rds")
+
+sum(seqtab_6465_nochim)/sum(seqtab_6465)
+```
+
+Track reads through the pipeline
+
+```{r}
+getN_6465 <- function(x) sum(getUniques(x))
+track_6465 <- cbind(out_6465, sapply(dadaFs_6465, getN_6465), sapply(dadaRs_6465, getN_6465), sapply(mergers_6465, getN_6465), rowSums(seqtab_6465_nochim))
+
+colnames(track_6465) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track_6465) <- sample.names_6465
+head(track_6465)
+```
+
+### S8275
+
+```{r}
+path4 <- "/mnt/xio/lf/metabolon/data/S8275"
+lf4<-list.files(path4)
+lf4
+```
+
+Primer check:
+
+```{r}
+fq <- scan(file=paste0(path4,"/",lf4[2]),what=character())
+length(fq)/5
+
+primer1 <- which(str_count(fq,"CAGC[:alpha:]GCCGCGGTAA")>0)
+length(primer1)/(length(fq)/5)
+
+primer2 <- which(str_count(fq,"GACTAC[:alpha:][:alpha:]GGGTATCTAATCC")>0)
+length(primer2)/(length(fq)/5)
+```
+
+Forward and reverse fastq filenames have format: SAMPLENAME_R1_001.fastq and SAMPLENAME_R2_001.fastq
+
+```{r}
+fnFs_8275 <- sort(list.files(path4, pattern=".1.fastq", full.names = TRUE))
+fnRs_8275 <- sort(list.files(path4, pattern=".2.fastq", full.names = TRUE))
+```
+
+```{r}
+plotQualityProfile(fnFs_8275[1:4])
+```
+
+```{r}
+plotQualityProfile(fnRs_8275[1:4])
+```
+
+Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+
+```{r}
+sample.names_8275 <- sapply(strsplit(basename(fnFs_8275), "\\."), "[",1)
+```
+
+Place filtered files in filtered/ subdirectory
+
+```{r}
+filtFs_8275 <- file.path(path4, "filtered", paste0(sample.names_8275, "_F_filt.fastq.gz"))
+filtRs_8275 <- file.path(path4, "filtered", paste0(sample.names_8275, "_R_filt.fastq.gz"))
+names(filtFs_8275) <- sample.names_8275
+names(filtRs_8275) <- sample.names_8275
+```
+
+```{r}
+out_8275 <- filterAndTrim(fnFs_8275, filtFs_8275, fnRs_8275, filtRs_8275, truncLen=c(240,200), trimLeft=c(15,21),
+                     maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+                     compress=TRUE, multithread=TRUE)
+
+out_8275
+
+saveRDS(out_8275,"S8275_out.rds")
+```
+
+```{r}
+errF_8275 <- learnErrors(filtFs_8275, multithread=TRUE)
+saveRDS(errF_8275,"S8275_errF.rds")
+
+plotErrors(errF_8275, nominalQ=TRUE)
+
+errR_8275 <- learnErrors(filtRs_8275, multithread=TRUE)
+saveRDS(errR_8275,"S8275_errR.rds")
+
+plotErrors(errR_8275, nominalQ=TRUE)
+```
+
+```{r}
+dadaFs_8275 <- dada(filtFs_8275, err=errF_8275, multithread=TRUE)
+dadaRs_8275 <- dada(filtRs_8275, err=errR_8275, multithread=TRUE)
+
+saveRDS(dadaFs_8275, "S8275_dadaFs.rds")
+saveRDS(dadaRs_8275, "S8275_dadaRs.rds")
+
+```
+
+Merge paired reads
+
+```{r}
+mergers_8275 <- mergePairs(dadaFs_8275, filtFs_8275, dadaRs_8275, filtRs_8275, verbose=TRUE)
+saveRDS(mergers_8275, "S8275_mergers.rds")
+```
+
+Construct sequence table
+
+```{r}
+seqtab_8275 <- makeSequenceTable(mergers_8275)
+dim(seqtab_8275)
+saveRDS(seqtab_8275, "S8275_seqtab.rds")
+```
+
+Remove chimeras
+
+```{r}
+seqtab_8275_nochim <- removeBimeraDenovo(seqtab_8275, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab_8275_nochim)
+saveRDS(seqtab_8275_nochim, "seqtab_8275_nochim.rds")
+
+sum(seqtab_8275_nochim)/sum(seqtab_8275)
+```
+
+Track reads through the pipeline
+
+```{r}
+getN_8275 <- function(x) sum(getUniques(x))
+track_8275 <- cbind(out_8275, sapply(dadaFs_8275, getN_8275), sapply(dadaRs_8275, getN_8275), sapply(mergers_8275, getN_8275), rowSums(seqtab_8275_nochim))
+
+colnames(track_8275) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track_8275) <- sample.names_8275
+head(track_8275)
+```
+
+## Assign taxonomy
+
+Merge all the sequence tables:
+
+```{r}
+seqtab_all <- mergeSequenceTables(seqtab_5005_nochim, seqtab_6464_nochim, seqtab_6465_nochim, seqtab_8275_nochim)
+saveRDS(seqtab_all, "seqtab_all.rds")
+```
+
+```{r}
+taxa1 <- assignTaxonomy(seqtab_all, "/mnt/xio/lf/metabolon/SILVA/silva_nr99_v138.1_train_set.fa.gz", multithread=TRUE, tryRC=TRUE)
+saveRDS(taxa1, "taxa1.rds")
+```
+
+Add species:
+```{r}
+taxa <- addSpecies(taxa, "/mnt/xio/lf/metabolon/SILVA/silva_species_assignment_v138.1.fa.gz")
+saveRDS(taxa, "taxa_species.rds")
+
+```
+
+Inspect taxonomy assignment:
+
+```{r}
+taxa.print <- taxa # Removing sequence rownames for display only
+rownames(taxa.print) <- NULL
+head(taxa.print)
+tail(taxa.print)
+
+```
+
+### Handoff to phyloseq
+
+Import metadata and convert date format (from dd.mm.yyyy to yyyy-mm-dd)
+```{r}
+sample_info <- read.table("Sample_info_mod_updated_VB_Luan_all_2024_1.txt",header = TRUE)
+sample_info$Date <- as.Date(sample_info$Date, format = "%d.%m.%Y")
+sample_info$Day <- as.character(sample_info$Day)
+
+sample_info_CeGaT_ID <- sapply(strsplit(basename(sample_info$CeGaT_ID), "\\."), "[",1)
+
+```
+
+check whether rownames of setab.nochim.rds are the same as sample_info$CeGaT_ID:
+```{r}
+identical(rownames(seqtab_all),sample_info_CeGaT_ID)
+rownames(seqtab_all)==sample_info_CeGaT_ID
+
+rownames(seqtab_all) <- sample_info_CeGaT_ID
+rownames(sample_info) <- rownames(seqtab_all)
+
+```
+
+Create phyloseq object
+```{r}
+ps <- phyloseq(otu_table(seqtab_all, taxa_are_rows=FALSE), 
+               sample_data(sample_info), 
+               tax_table(taxa))
+
+samples_to_keep <- sample_names(ps)[!sample_names(ps) %in% "S5005Nr85"]
+ps.1 <- prune_samples(samples_to_keep,ps)
+
+ps.rel <- transform_sample_counts(ps.1, function(OTU) OTU/sum(OTU)) #it only worked when removed the sample with zero reads
+
+top20 <- names(sort(taxa_sums(ps.rel), decreasing=TRUE))[1:20]
+ps.top20 <- prune_taxa(top20, ps.rel)
+
+plot_bar(ps.top20, x="Sample_Info", fill="Genus") + facet_wrap(~Lane, scales="free_x")
+plot_bar(ps.top20, x="Sample_Info", fill="Order") + facet_wrap(~Lane, scales="free_x")
+plot_bar(ps.top20, x="Sample_Info", fill="Phylum") + facet_wrap(~Lane, scales="free_x")
+
+
+top30 <- names(sort(taxa_sums(ps.rel), decreasing=TRUE))[1:30]
+ps.top30 <- prune_taxa(top30, ps.rel)
+
+plot_bar(ps.top30, x="Sample_Info", fill="Genus") + facet_wrap(~Lane, scales="free_x")
+plot_bar(ps.top30, x="Sample_Info", fill="Order") + facet_wrap(~Lane, scales="free_x")
+plot_bar(ps.top30, x="Sample_Info", fill="Phylum") + facet_wrap(~Lane, scales="free_x")
+
+
+top40 <- names(sort(taxa_sums(ps.rel), decreasing=TRUE))[1:40]
+ps.top40 <- prune_taxa(top40, ps.rel)
+
+plot_bar(ps.top40, x="Sample_Info", fill="Genus") + facet_wrap(~Lane, scales="free_x")
+plot_bar(ps.top40, x="Sample_Info", fill="Order") + facet_wrap(~Lane, scales="free_x")
+plot_bar(ps.top40, x="Sample_Info", fill="Phylum") + facet_wrap(~Lane, scales="free_x")
+
+
+## Be careful! Sample S5005Nr75.1.fastq.gz (triplicate)has error only psedomonas! -> I removed from ps3:
+samples_to_keep2 <- sample_names(ps.1)[!sample_names(ps.1) %in% "S5005Nr75"]
+ps.2 <- prune_samples(samples_to_keep2,ps)
+length(samples_to_keep2)
+ps.2
+
+#Merge duplicate samples
+sample_data(ps.2)
+merged.ps <- merge_samples(ps.2,get_variable(ps.2,"merge_factor"))
+merged.ps
+
+#Create new metadata table, order alphabetically and paste to merged.ps
+sample_data(merged.ps)
+sample_info_merged <- subset(sample_info, Duplicate == 1)
+sample_info_merged <- sample_info_merged[order(sample_info_merged$Sample_Info),]
+dim(sample_info_merged)
+
+#Check if the data and sample_info are in the same order
+identical(rownames(sample_data(merged.ps)),sample_info_merged$Sample_Info)
+
+row_name <- sample_info_merged$Sample_Info
+row_name
+
+rownames(sample_info_merged) <- row_name
+sample_data(sample_info_merged)
+
+sample_names(merged.ps)
+rownames(sample_info_merged)
+
+#Paste the new metadata table to merged.ps and check
+sample_data(merged.ps) <- sample_info_merged
+sample_data(merged.ps)
+identical(sample_data(merged.ps)$Sample_Info, sample_names(merged.ps))
+
+#Save merged metadata to use in other R sessions
+write.csv(sample_info_merged, "Sample_info_merged_all_1.csv")
+
+#Save merged phyloseq object to use in other R sessions
+saveRDS(merged.ps, "merged.ps.rds")
+
+#Assign the name of the lowest known taxonomic rank for every NA value in each ASV
+# Opt1: Unknown <taxa>
+merged.ps <- name_na_taxa(merged.ps) 
+# Opt2: NA <taxa>
+ps_tmp1 <- name_na_taxa(merged.ps,
+                       include_rank = F,
+                       na_label = "NA <tax>")
+
+## remove initial sample (system probably not completely set up)
+samples_to_keep3 <- sample_names(merged.ps)[!sample_names(merged.ps) %in% "L1_1_3_29_Mar_21"]
+merged.ps <- prune_samples(samples_to_keep3,merged.ps)
+
+saveRDS(merged.ps, "merged.ps.na.rds")
+
+
+```
+
+```{r}
+ps.rel <- transform_sample_counts(merged.ps, function(OTU) OTU/sum(OTU))
+
+#Verifications before going to next step
+min(rowSums(otu_table(merged.ps)))
+max(rowSums(otu_table(merged.ps)))
+min(rowSums(otu_table(ps.rel)))
+max(rowSums(otu_table(ps.rel)))
+
+top20 <- names(sort(taxa_sums(ps.rel), decreasing=TRUE))[1:20]
+ps.top20 <- prune_taxa(top20, ps.rel)
+
+plot_bar(ps.top20, x="Sample_Info", fill="Genus") + facet_wrap(~Lane, scales="free_x")
+plot_bar(ps.top20, x="Sample_Info", fill="Order") + facet_wrap(~Lane, scales="free_x")
+plot_bar(ps.top20, x="Sample_Info", fill="Phylum") + facet_wrap(~Lane, scales="free_x")
+
+
+top30 <- names(sort(taxa_sums(ps.rel), decreasing=TRUE))[1:30]
+ps.top30 <- prune_taxa(top30, ps.rel)
+
+plot_bar(ps.top30, x="Sample_Info", fill="Genus") + facet_wrap(~Lane, scales="free_x")
+plot_bar(ps.top30, x="Sample_Info", fill="Order") + facet_wrap(~Lane, scales="free_x")
+plot_bar(ps.top30, x="Sample_Info", fill="Phylum") + facet_wrap(~Lane, scales="free_x")
+
+
+top40 <- names(sort(taxa_sums(ps.rel), decreasing=TRUE))[1:40]
+ps.top40 <- prune_taxa(top40, ps.rel)
+
+plot_bar(ps.top40, x="Sample_Info", fill="Genus") + facet_wrap(~Lane, scales="free_x")
+plot_bar(ps.top40, x="Sample_Info", fill="Order") + facet_wrap(~Lane, scales="free_x")
+plot_bar(ps.top40, x="Sample_Info", fill="Phylum") + facet_wrap(~Lane, scales="free_x")
+
+```
+
+## Subsetting anammox and nitrifiers OTUs
+
+Create a vector for each level of the taxa of interest
+2-phylum 3-class, 4-order, 5-family, 6-genus
+```{r}
+# anammox_5 <- c("Brocadiaceae", "Scalinduaceae")
+# nitrificant_aoa_5 <- c("Nitrosopumilaceae", "Nitrososphaeraceae")
+# nitrificant_aob_5 <- c("Nitrospinaceae", "Nitrosomonadaceae", "Nitrosococcaceae", "Nitrosomonadaceae")
+# nitrificant_5 <- c(nitrificant_aoa_5, nitrificant_aob_5)
+# nitrificant_nob_5 <- c("Nitrospiraceae", "Xanthobacteraceae", "Nitrospinaceae", "Nitrococcaceae")
+# denitrificant_5 <- c("Rhodocyclaceae", "Rhodobacteraceae", "Pseudomonadaceae", "Hydrogenophilaceae", "Micrococcaceae", "Alcaligenaceae")
+
+# anammox_6 <- c("Candidatus Brocadia", "Candidatus Jettenia", "Candidatus Anammoxoglobus",
+#                "Candidatus Kuenenia", "Candidatus Scalindua")
+# nitrificant_aoa_6 <- c("Nitrosopumilus", "Nitrososphaera", "Candidatus Nitrocosmicus")
+# nitrificant_aob_6 <- c("Nitrospina", "Nitrosomonas", "Nitrosococcus", "Nitrosospira")
+# nitrificant_6 <- c(nitrificant_aoa_6, nitrificant_aob_6)
+# nitrificant_nob_6 <- c("Nitrospira", "Nitrobacter", "Nitrospina", "Nitrococcus")
+# denitrificant_6 <- c("Thauera", "Paracoccus", "Pseudomonas", "Thiobacillus", "Micrococcus", "Achromobacter")
+
+anammox_6 <- c("Brocadia","Jettenia", "Anammoxoglobus", "Kuenenia",
+               "Loosdrechtia", "Scalindua", "Anammoxibacter",
+               "Bathyanammoxibius", "Subterrananammoxibius",
+               
+               "Brocadiaceae", "Scalinduaceae", "Anammoxibacteraceae",
+               "Bathyanammoxibiaceae", "Subterrananammoxibiaceae",
+               
+               "Brocadiales",
+               
+               "Brocadiae")
+
+nitrificant_aoa_6 <- c("Nitrosopumilus", "Nitrososphaera", "Nitrosocosmicus",
+                       "Nitrocosmicus", "Nitrosopolaris", "Nitrosocaldus",
+                       "Nitrosotalea",
+                       
+                       "Nitrosopumilaceae", "Nitrososphaeraceae")
+
+nitrificant_aob_6 <- c("Nitrosospina", "Nitrosomonas", "Nitrosococcus",
+                       "Nitrosospira", "Nitrosovibrio", 
+
+                       
+                       "Nitrosomonadaceae")
+
+nitrificant_6 <- c(nitrificant_aoa_6, nitrificant_aob_6)
+
+nitrificant_nob_6 <- c("Nitrospira", "Nitrobacter", "Nitrococcus", "Nitrospina",
+                       "Nitronauta", "Nitromaritima", "Nitrohelix",
+                       
+                       "Nitrospinaceae")
+
+# denitrificant_6 <- c("Pseudomonas", "Ralstonia", "Alcaligenes", "Paracoccus",
+#                      "Rhodobacter", "Rubrivivax", "Thauera", "Burkholderia",
+#                      "Bacillus", "Streptomyces")
+
+denitrificant_6 <- c("Haloarcula","Halobacterium","Pyrobaculum","Firmicutes",
+                     "Bacillus","Paenibacillus","Actinomycetes","Corynebacterium",
+                     "Streptomyces","Bacteroides","Flavobacterium","Flexibacter",
+                     "Aquifaceae","Hydrogenobacter","Proteobacteria","Agrobacterium",
+                     "Azospirillum","Bradyrhizobium","Brucella","Hyphomicrobium",
+                     "Mesorhizobium","Ochrobactrum","Paracoccus","Pseudovibrio",
+                     "Rhizobium","Rhodobacter","Rhodopseudomonas","Sinorhizobium",
+                     "Betaproteobacteria","Acidovorax","Alcaligenes","Achromobacter",
+                     "Aquaspirillum","Azoarcus","Azonexus","Azospira","Azovibrio",
+                     "Burkholderia","Chromobacterium","Comamonas","Cupriavidus",
+                     "Dechloromonas","Denitratisoma","Kingella","Microvirgula",
+                     "Neisseria","Ottowia","Ralstonia","Rubrivivax","Sterolibacterium",
+                     "Thauera","Thibacillus","Gammaproteobacteria","Halomonas",
+                     "Luteimonas","Pseudomonas","Pseudoxanthomonas","Shewanella",
+                     "Stenotrophomonas","Thioalkalivibrio","Zobellella","Epsilonproteobacteria",
+                     "Nitratifractor","Nitratiruptor","Thiomicrospira")
+
+
+unname(tax_table(ps.rel))
+c6 <- unname(tax_table(ps.rel))[,6]
+table(c6)
+
+#Looks for taxa of interest
+#ANAMMOX
+c6_anammox<-str_detect(c6, paste(anammox_6, collapse = "|"))
+
+positions<-which(c6_anammox==TRUE)
+
+sequences<-rownames(tax_table(ps.rel))[positions]
+#sequences
+#dim(sequences)
+
+tax_new<- tax_table(ps.rel)[sequences,]
+dim(tax_new)
+
+otu_table_new <- otu_table(ps.rel)[,sequences]
+dim(otu_table_new)
+
+ps.anammox <- phyloseq(otu_table(otu_table_new,taxa_are_rows = FALSE),
+                         tax_table(tax_new),
+                         sample_data(sample_info_merged))
+
+ps.anammox <- prune_samples(sample_sums(ps.anammox) > 0, ps.anammox)
+ps.anammox <- prune_taxa(taxa_sums(ps.anammox) > 0, ps.anammox)
+
+# plot_bar(ps.anammox, x="Sample_Info", fill="Genus") + 
+#   facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))
+
+#Save new phyloseq object to use in other R sessions
+saveRDS(ps.anammox, "ps.anammox1.all.rds")
+  
+
+#NITRIFICANT AOA
+c6_nitrificant_aoa<-str_detect(c6, paste(nitrificant_aoa_6, collapse = "|"))
+positions<-which(c6_nitrificant_aoa==TRUE)
+
+sequences<-rownames(tax_table(ps.rel))[positions]
+
+tax_new<- tax_table(ps.rel)[sequences,]
+dim(tax_new)
+
+otu_table_new <- otu_table(ps.rel)[,sequences]
+dim(otu_table_new)
+
+ps.nitrificant_aoa <- phyloseq(otu_table(otu_table_new,taxa_are_rows = FALSE),
+                           tax_table(tax_new),
+                           sample_data(sample_info_merged))
+
+ps.nitrificant_aoa <- prune_samples(sample_sums(ps.nitrificant_aoa) > 0, ps.nitrificant_aoa)
+ps.nitrificant_aoa <- prune_taxa(taxa_sums(ps.nitrificant_aoa) > 0, ps.nitrificant_aoa)
+
+# plot_bar(ps.nitrificant_aoa, x="Sample_Info", fill="Genus") + 
+#   facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))
+
+#Save new phyloseq object to use in other R sessions
+saveRDS(ps.nitrificant_aoa, "ps.nitrificant_aoa1.all.rds")
+
+#NITRIFICANT AOB
+c6_nitrificant_aob<-str_detect(c6, paste(nitrificant_aob_6, collapse = "|"))
+positions<-which(c6_nitrificant_aob==TRUE)
+
+sequences<-rownames(tax_table(ps.rel))[positions]
+
+tax_new<- tax_table(ps.rel)[sequences,]
+dim(tax_new)
+
+otu_table_new <- otu_table(ps.rel)[,sequences]
+dim(otu_table_new)
+
+ps.nitrificant_aob <- phyloseq(otu_table(otu_table_new,taxa_are_rows = FALSE),
+                               tax_table(tax_new),
+                               sample_data(sample_info_merged))
+
+ps.nitrificant_aob <- prune_samples(sample_sums(ps.nitrificant_aob) > 0, ps.nitrificant_aob)
+ps.nitrificant_aob <- prune_taxa(taxa_sums(ps.nitrificant_aob) > 0, ps.nitrificant_aob)
+
+# plot_bar(ps.nitrificant_aob, x="Sample_Info", fill="Genus") + 
+#   facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))
+
+#Save new phyloseq object to use in other R sessions
+saveRDS(ps.nitrificant_aob, "ps.nitrificant_aob1.all.rds")
+
+
+#NITRIFICANT TOTAL
+c6_nitrificant<-str_detect(c6, paste(nitrificant_6, collapse = "|"))
+positions<-which(c6_nitrificant==TRUE)
+
+sequences<-rownames(tax_table(ps.rel))[positions]
+
+tax_new<- tax_table(ps.rel)[sequences,]
+dim(tax_new)
+
+otu_table_new <- otu_table(ps.rel)[,sequences]
+dim(otu_table_new)
+
+ps.nitrificant <- phyloseq(otu_table(otu_table_new,taxa_are_rows = FALSE),
+                               tax_table(tax_new),
+                               sample_data(sample_info_merged))
+
+ps.nitrificant <- prune_samples(sample_sums(ps.nitrificant) > 0, ps.nitrificant)
+ps.nitrificant <- prune_taxa(taxa_sums(ps.nitrificant) > 0, ps.nitrificant)
+
+# plot_bar(ps.nitrificant, x="Sample_Info", fill="Genus") + 
+#   facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))
+
+#Save new phyloseq object to use in other R sessions
+saveRDS(ps.nitrificant, "ps.nitrificant1.all.rds")
+
+#NITRIFICANT NOB
+c6_nitrificant_nob<-str_detect(c6, paste(nitrificant_nob_6, collapse = "|"))
+positions<-which(c6_nitrificant_nob==TRUE)
+
+sequences<-rownames(tax_table(ps.rel))[positions]
+
+tax_new<- tax_table(ps.rel)[sequences,]
+dim(tax_new)
+
+otu_table_new <- otu_table(ps.rel)[,sequences]
+dim(otu_table_new)
+
+ps.nitrificant_nob <- phyloseq(otu_table(otu_table_new,taxa_are_rows = FALSE),
+                           tax_table(tax_new),
+                           sample_data(sample_info_merged))
+
+ps.nitrificant_nob <- prune_samples(sample_sums(ps.nitrificant_nob) > 0, ps.nitrificant_nob)
+ps.nitrificant_nob <- prune_taxa(taxa_sums(ps.nitrificant_nob) > 0, ps.nitrificant_nob)
+
+# plot_bar(ps.nitrificant_nob, x="Sample_Info", fill="Genus") + 
+#   facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))
+
+#Save new phyloseq object to use in other R sessions
+saveRDS(ps.nitrificant_nob, "ps.nitrificant_nob1.all.rds")
+
+
+#DENITRIFICANT
+c6_denitrificant<-str_detect(c6, paste(denitrificant_6, collapse = "|"))
+positions<-which(c6_denitrificant==TRUE)
+
+sequences<-rownames(tax_table(ps.rel))[positions]
+
+tax_new<- tax_table(ps.rel)[sequences,]
+dim(tax_new)
+
+otu_table_new <- otu_table(ps.rel)[,sequences]
+dim(otu_table_new)
+
+ps.denitrificant <- phyloseq(otu_table(otu_table_new,taxa_are_rows = FALSE),
+                             tax_table(tax_new),
+                             sample_data(sample_info_merged))
+
+ps.denitrificant <- prune_samples(sample_sums(ps.denitrificant) > 0, ps.denitrificant)
+ps.denitrificant <- prune_taxa(taxa_sums(ps.denitrificant) > 0, ps.denitrificant)
+
+# plot_bar(ps.denitrificant, x="Sample_Info", fill="Genus") + 
+#   facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))
+
+#Save new phyloseq object to use in other R sessions
+saveRDS(ps.denitrificant, "ps.denitrificant1.all.rds")
+
+
+#PLANCTOMYCETES
+#Create a vector only with class level
+c2 <- unname(tax_table(ps.rel))[,2]
+c2_planc<-str_detect(c2, "Planctomycetota")
+positions<-which(c2_planc==TRUE)
+
+sequences<-rownames(tax_table(ps.rel))[positions]
+
+tax_new<- tax_table(ps.rel)[sequences,]
+dim(tax_new)
+
+otu_table_new <- otu_table(ps.rel)[,sequences]
+dim(otu_table_new)
+
+ps.planc <- phyloseq(otu_table(otu_table_new,taxa_are_rows = FALSE),
+                               tax_table(tax_new),
+                               sample_data(sample_info_merged))
+
+ps.planc <- prune_samples(sample_sums(ps.planc) > 0, ps.planc)
+ps.planc <- prune_taxa(taxa_sums(ps.planc) > 0, ps.planc)
+
+# plot_bar(ps.planc, x="Sample_Info", fill="Genus") +
+#   # theme(legend.position = "none") +
+#   facet_wrap(~Lane, scales="free_x") +
+#   aes(x=reorder(Sample_Info,Date))
+
+#Save new phyloseq object to use in other R sessions
+saveRDS(ps.planc, "ps.planc1.all.rds")
+
+```
+
+
+<!-- Plotting is done in the plots.rmd script -->
+
+
+<!-- ```{r} -->
+<!-- #Read new phyloseq object (no need to rerun the previous code) -->
+<!-- ps.anammox <- readRDS("ps.anammox.all.rds") -->
+<!-- ps.nitrificant_aoa <- readRDS("ps.nitrificant_aoa.all.rds") -->
+<!-- ps.nitrificant_aob <- readRDS("ps.nitrificant_aob.all.rds") -->
+<!-- ps.nitrificant <- readRDS("ps.nitrificant.all.rds") -->
+<!-- ps.nitrificant_nob <- readRDS("ps.nitrificant_nob.all.rds") -->
+<!-- ps.denitrificant <- readRDS("ps.denitrificant.all.rds") -->
+<!-- ps.planc <- readRDS("ps.planc.all.rds") -->
+
+<!-- #Read relative abundances phyloseq object -->
+<!-- merged.ps <- readRDS("merged.ps.rds") -->
+<!-- ps.rel <- transform_sample_counts(merged.ps, function(OTU) OTU/sum(OTU)) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- #Plotting general top20 + anammox/nitrifiers subsets (REACTORS) -->
+<!-- { -->
+<!-- for(k in 1:2){    #Lanes -->
+<!--   assign(paste0("ps.l", k), -->
+<!--          subset_samples(merged.ps, Lane==paste0("L", k))) -->
+<!--   assign(paste0("plot.shannon.L", k),  -->
+<!--          plot_richness(get(paste0("ps.l", k)), x="Sample_Info", measures="Shannon") + -->
+<!--            facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))) -->
+
+<!--   ggsave(get(paste0("plot.shannon.L", k)),  -->
+<!--          file = paste0("plot.shannon.L", k, ".png"),  -->
+<!--          dpi = 600, width = 20, height = 20, units = "cm") -->
+
+<!--   assign(paste0("plot.simpson.L", k),  -->
+<!--          plot_richness(get(paste0("ps.l", k)), x="Sample_Info", measures="Simpson") + -->
+<!--            facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))) -->
+
+<!--   ggsave(get(paste0("plot.simpson.L", k)),  -->
+<!--          file = paste0("plot.simpson.L", k, ".png"),  -->
+<!--          dpi = 600, width = 20, height = 20, units = "cm") -->
+
+<!--   assign(paste0("ps.planc.l", k), -->
+<!--          subset_samples(ps.planc, Lane==paste0("L", k))) -->
+<!--   assign(paste0("plot.planc.L", k), -->
+<!--          plot_bar(get(paste0("ps.planc.l", k)), x="Sample_Info", fill="Genus") + -->
+<!--            theme(legend.position = "bottom") +  -->
+<!--            facet_wrap(~Reactor, scales="free_x") +  -->
+<!--            aes(x=reorder(Sample_Info,Date))) -->
+
+<!--   ggsave(get(paste0("plot.planc.L", k)),  -->
+<!--          file = paste0("plot.planc.L", k, ".png"),  -->
+<!--          dpi = 350, width = 30, height = 30, units = "cm") -->
+
+
+<!--   for (j in 2:3){    #Reactors -->
+<!--     assign(paste0("ps.l", k, "_", j), -->
+<!--            subset_samples(ps.rel, Lane==paste0("L", k) & Reactor==paste0("R", j))) -->
+<!--     assign(paste0("l", k, "_", j, ".top20"),  -->
+<!--            names(sort(taxa_sums(get(paste0("ps.l", k, "_", j))), decreasing=TRUE))[1:20]) -->
+<!--     assign(paste0("ps.l", k, "_", j, ".top20"), -->
+<!--            prune_taxa(get(paste0("l", k, "_", j, ".top20")), get(paste0("ps.l", k, "_", j)))) -->
+<!--     assign(paste0("plot.top20.L", k, "_", j), -->
+<!--            plot_bar(get(paste0("ps.l", k, "_", j, ".top20")), x="Sample_Info", fill="Genus") + -->
+<!--            facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))) -->
+
+<!--     ggsave(get(paste0("plot.top20.L", k, "_", j)),  -->
+<!--            file = paste0("top20.L", k, "_", j, ".png"),  -->
+<!--            dpi = 600, width = 20, height = 20, units = "cm") -->
+
+<!--     positions<-which(paste0("L", k) == sample_data(ps.anammox)$Lane) -->
+<!--     if (is.element(paste0("R", j),sample_data(ps.anammox)$Reactor[positions])==TRUE){ -->
+<!--       assign(paste0("ps.l", k, "_", j, ".anammox"), -->
+<!--              subset_samples(get(paste0("ps.anammox")), Lane==paste0("L", k) & Reactor==paste0("R", j))) -->
+<!--       assign(paste0("ps.l", k, "_", j, ".anammox"), -->
+<!--              prune_samples(sample_sums(get(paste0("ps.l", k, "_", j, ".anammox")))>0,  -->
+<!--                            get(paste0("ps.l", k, "_", j, ".anammox")))) -->
+<!--       assign(paste0("ps.l", k, "_", j, ".anammox"), -->
+<!--              prune_taxa(taxa_sums(get(paste0("ps.l", k, "_", j, ".anammox")))>0,  -->
+<!--                         get(paste0("ps.l", k, "_", j, ".anammox")))) -->
+<!--       assign(paste0("plot.L", k, "_", j, ".anammox"), -->
+<!--              plot_bar(get(paste0("ps.l", k, "_", j, ".anammox")), x="Sample_Info", fill="Genus") +  -->
+<!--                facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))) -->
+
+<!--       ggsave(get(paste0("plot.L", k, "_", j, ".anammox")),  -->
+<!--              file = paste0("L", k, "_", j, ".anammox.png"),  -->
+<!--              dpi = 600, width = 20, height = 20, units = "cm") -->
+<!--     }   -->
+
+<!--     positions<-which(paste0("L", k) == sample_data(ps.nitrificant_aoa)$Lane) -->
+<!--     if (is.element(paste0("R", j),sample_data(ps.nitrificant_aoa)$Reactor[positions])==TRUE){     -->
+<!--       assign(paste0("ps.l", k, "_", j, ".nitrificant_aoa"), -->
+<!--              subset_samples(get(paste0("ps.nitrificant_aoa")), Lane==paste0("L", k) & Reactor==paste0("R", j))) -->
+<!--       assign(paste0("ps.l", k, "_", j, ".nitrificant_aoa"), -->
+<!--              prune_samples(sample_sums(get(paste0("ps.l", k, "_", j, ".nitrificant_aoa")))>0,  -->
+<!--                            get(paste0("ps.l", k, "_", j, ".nitrificant_aoa")))) -->
+<!--       assign(paste0("ps.l", k, "_", j, ".nitrificant_aoa"), -->
+<!--              prune_taxa(taxa_sums(get(paste0("ps.l", k, "_", j, ".nitrificant_aoa")))>0,  -->
+<!--                         get(paste0("ps.l", k, "_", j, ".nitrificant_aoa")))) -->
+<!--       assign(paste0("plot.L", k, "_", j, ".nitrificant_aoa"), -->
+<!--              plot_bar(get(paste0("ps.l", k, "_", j, ".nitrificant_aoa")), x="Sample_Info", fill="Genus")+ -->
+<!--                facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))) -->
+
+<!--       ggsave(get(paste0("plot.L", k, "_", j, ".nitrificant_aoa")),  -->
+<!--              file = paste0("L", k, "_", j, ".nitrificant_aoa.png"),  -->
+<!--              dpi = 600, width = 20, height = 20, units = "cm") -->
+<!--     } -->
+
+<!--     positions<-which(paste0("L", k) == sample_data(ps.nitrificant_aob)$Lane) -->
+<!--     if (is.element(paste0("R", j),sample_data(ps.nitrificant_aob)$Reactor[positions])==TRUE){ -->
+<!--       assign(paste0("ps.l", k, "_", j, ".nitrificant_aob"), -->
+<!--              subset_samples(get(paste0("ps.nitrificant_aob")), Lane==paste0("L", k) & Reactor==paste0("R", j))) -->
+<!--       assign(paste0("ps.l", k, "_", j, ".nitrificant_aob"), -->
+<!--              prune_samples(sample_sums(get(paste0("ps.l", k, "_", j, ".nitrificant_aob")))>0,  -->
+<!--                            get(paste0("ps.l", k, "_", j, ".nitrificant_aob")))) -->
+<!--       assign(paste0("ps.l", k, "_", j, ".nitrificant_aob"), -->
+<!--              prune_taxa(taxa_sums(get(paste0("ps.l", k, "_", j, ".nitrificant_aob")))>0,  -->
+<!--                         get(paste0("ps.l", k, "_", j, ".nitrificant_aob")))) -->
+<!--       assign(paste0("plot.L", k, "_", j, ".nitrificant_aob"), -->
+<!--              plot_bar(get(paste0("ps.l", k, "_", j, ".nitrificant_aob")), x="Sample_Info", fill="Genus")+ -->
+<!--                facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))) -->
+
+<!--       ggsave(get(paste0("plot.L", k, "_", j, ".nitrificant_aob")),  -->
+<!--              file = paste0("L", k, "_", j, ".nitrificant_aob.png"),  -->
+<!--              dpi = 600, width = 20, height = 20, units = "cm") -->
+<!--     } -->
+
+<!--     positions<-which(paste0("L", k) == sample_data(ps.nitrificant)$Lane) -->
+<!--     if (is.element(paste0("R", j),sample_data(ps.nitrificant)$Reactor[positions])==TRUE){ -->
+<!--       assign(paste0("ps.l", k, "_", j, ".nitrificant"), -->
+<!--              subset_samples(get(paste0("ps.nitrificant")), Lane==paste0("L", k) & Reactor==paste0("R", j))) -->
+<!--       assign(paste0("ps.l", k, "_", j, ".nitrificant"), -->
+<!--              prune_samples(sample_sums(get(paste0("ps.l", k, "_", j, ".nitrificant")))>0,  -->
+<!--                            get(paste0("ps.l", k, "_", j, ".nitrificant")))) -->
+<!--       assign(paste0("ps.l", k, "_", j, ".nitrificant"), -->
+<!--              prune_taxa(taxa_sums(get(paste0("ps.l", k, "_", j, ".nitrificant")))>0,  -->
+<!--                         get(paste0("ps.l", k, "_", j, ".nitrificant")))) -->
+<!--       assign(paste0("plot.L", k, "_", j, ".nitrificant"), -->
+<!--              plot_bar(get(paste0("ps.l", k, "_", j, ".nitrificant")), x="Sample_Info", fill="Genus") +  -->
+<!--                facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))) -->
+
+<!--      ggsave(get(paste0("plot.L", k, "_", j, ".nitrificant")),  -->
+<!--             file = paste0("L", k, "_", j, ".nitrificant.png"),  -->
+<!--             dpi = 600, width = 20, height = 20, units = "cm") -->
+<!--     } -->
+
+<!--     positions<-which(paste0("L", k) == sample_data(ps.nitrificant_nob)$Lane) -->
+<!--     if (is.element(paste0("R", j),sample_data(ps.nitrificant_nob)$Reactor[positions])==TRUE){ -->
+<!--       assign(paste0("ps.l", k, "_", j, ".nitrificant_nob"), -->
+<!--              subset_samples(get(paste0("ps.nitrificant_nob")), Lane==paste0("L", k) & Reactor==paste0("R", j))) -->
+<!--       assign(paste0("ps.l", k, "_", j, ".nitrificant_nob"), -->
+<!--              prune_samples(sample_sums(get(paste0("ps.l", k, "_", j, ".nitrificant_nob")))>0,  -->
+<!--                            get(paste0("ps.l", k, "_", j, ".nitrificant_nob")))) -->
+<!--       assign(paste0("ps.l", k, "_", j, ".nitrificant_nob"), -->
+<!--              prune_taxa(taxa_sums(get(paste0("ps.l", k, "_", j, ".nitrificant_nob")))>0,  -->
+<!--                         get(paste0("ps.l", k, "_", j, ".nitrificant_nob")))) -->
+<!--       assign(paste0("plot.L", k, "_", j, ".nitrificant_nob"), -->
+<!--              plot_bar(get(paste0("ps.l", k, "_", j, ".nitrificant_nob")), x="Sample_Info", fill="Genus")+ -->
+<!--                facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))) -->
+
+<!--       ggsave(get(paste0("plot.L", k, "_", j, ".nitrificant_nob")),  -->
+<!--              file = paste0("L", k, "_", j, ".nitrificant_nob.png"),  -->
+<!--              dpi = 600, width = 20, height = 20, units = "cm") -->
+<!--     } -->
+
+<!--     positions<-which(paste0("L", k) == sample_data(ps.denitrificant)$Lane) -->
+<!--     if (is.element(paste0("R", j),sample_data(ps.denitrificant)$Reactor[positions])==TRUE){ -->
+<!--       assign(paste0("ps.l", k, "_", j, ".denitrificant"), -->
+<!--              subset_samples(get(paste0("ps.denitrificant")), Lane==paste0("L", k) & Reactor==paste0("R", j))) -->
+<!--       assign(paste0("ps.l", k, "_", j, ".denitrificant"), -->
+<!--              prune_samples(sample_sums(get(paste0("ps.l", k, "_", j, ".denitrificant")))>0,  -->
+<!--                            get(paste0("ps.l", k, "_", j, ".denitrificant")))) -->
+<!--       assign(paste0("ps.l", k, "_", j, ".denitrificant"), -->
+<!--              prune_taxa(taxa_sums(get(paste0("ps.l", k, "_", j, ".denitrificant")))>0,  -->
+<!--                         get(paste0("ps.l", k, "_", j, ".denitrificant")))) -->
+<!--       assign(paste0("plot.L", k, "_", j, ".denitrificant"), -->
+<!--              plot_bar(get(paste0("ps.l", k, "_", j, ".denitrificant")), x="Sample_Info", fill="Genus") +  -->
+<!--                facet_wrap(~Reactor, scales="free_x") + aes(x=reorder(Sample_Info,Date))) -->
+
+<!--       ggsave(get(paste0("plot.L", k, "_", j, ".denitrificant")),  -->
+<!--              file = paste0("L", k, "_", j, ".denitrificant.png"),  -->
+<!--              dpi = 600, width = 20, height = 20, units = "cm") -->
+<!--     } -->
+<!--   } -->
+<!-- } -->
+<!-- } -->
+<!-- ``` -->
+
